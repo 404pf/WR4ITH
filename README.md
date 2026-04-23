@@ -53,7 +53,7 @@ Claude can request additional tool runs mid-analysis if it needs more data — s
 
 **1. Clone**
 ```bash
-git clone git@github.com:YOUR_USERNAME/WR4ITH.git
+git clone git@github.com:404pf/WR4ITH.git
 cd WR4ITH
 ```
 
