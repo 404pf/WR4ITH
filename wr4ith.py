@@ -18,6 +18,7 @@ from tools import interactive_tool_run, format_recon_for_llm
 from webtools import run_web_recon
 from llm import analyse_target, get_api_key
 from export import export_menu
+from ai_mode import run_ai_mode
 
 
 # ─────────────────────────────────────────────
@@ -343,7 +344,8 @@ def main_menu():
         banner()
         print("  \033[92m[1]\033[0m  New Scan")
         print("  \033[92m[2]\033[0m  View History")
-        print("  \033[92m[3]\033[0m  Exit")
+        print("  \033[92m[3]\033[0m  AI Mode")
+        print("  \033[92m[4]\033[0m  Exit")
         divider()
 
         choice = prompt("wr4ith> ")
@@ -355,6 +357,9 @@ def main_menu():
             view_history()
             input("\n\033[90mPress Enter to continue...\033[0m")
         elif choice == "3":
+            run_ai_mode()
+            input("\n\033[90mPress Enter to continue...\033[0m")
+        elif choice == "4":
             print("\n\033[91m[*] Shutting down WR4ITH. Stay legal.\033[0m\n")
             sys.exit(0)
         else:
