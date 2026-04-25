@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
 WR4ITH - llm.py
-Claude API brain. Replaces Ollama/metatron-qwen from METATRON.
-Keeps the agentic tool loop — Claude can request more tool runs mid-analysis.
+Claude API brain. Supports .env file for API key.
 """
 
 import re
 import os
-import json
 import requests
 from tools import run_tool_by_command
 from search import handle_search_dispatch
@@ -19,13 +17,30 @@ MAX_TOOL_LOOPS    = 6
 
 
 # ─────────────────────────────────────────────
-# API KEY
+# API KEY — .env → env var → ~/.wr4ith_key
 # ─────────────────────────────────────────────
 
+def _load_dotenv():
+    """Load .env file from the project directory if it exists."""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and val:
+                os.environ.setdefault(key, val)
+
+
 def get_api_key() -> str:
+    _load_dotenv()
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not key:
-        # fallback: check ~/.wr4ith_key
         keyfile = os.path.expanduser("~/.wr4ith_key")
         if os.path.exists(keyfile):
             with open(keyfile) as f:
@@ -56,12 +71,12 @@ Rules:
 - Assign final risk rating based on actual evidence only
 
 Output format for vulnerabilities:
-VULN: <name> | SEVERITY: <level> | PORT: <port> | SERVICE: <service>
+VULN: <n> | SEVERITY: <level> | PORT: <port> | SERVICE: <service>
 DESC: <description>
 FIX: <fix recommendation>
 
 Output format for exploits:
-EXPLOIT: <name> | TOOL: <tool> | PAYLOAD: <payload>
+EXPLOIT: <n> | TOOL: <tool> | PAYLOAD: <payload>
 RESULT: <expected result>
 NOTES: <notes>
 
@@ -70,7 +85,7 @@ RISK_LEVEL: <CRITICAL|HIGH|MEDIUM|LOW>
 SUMMARY: <2-3 sentence overall summary>
 
 Accuracy rules:
-- Only assert versions you see in the scan data
+- Only assert versions you see in scan data
 - Never infer CVEs from guessed versions
 - filtered/no-response = INCONCLUSIVE not vulnerable
 - Only CRITICAL if direct evidence of exploitability exists
@@ -84,15 +99,14 @@ Accuracy rules:
 
 def ask_claude(messages: list) -> str:
     key = get_api_key()
-    if not key:
-        return "[!] No API key found. Set ANTHROPIC_API_KEY env var or save to ~/.wr4ith_key"
+    if not key or len(key) < 20:
+        return "[!] No valid API key found. Add ANTHROPIC_API_KEY to .env or ~/.wr4ith_key"
 
     headers = {
         "x-api-key":         key,
         "anthropic-version": "2023-06-01",
         "content-type":      "application/json",
     }
-
     payload = {
         "model":      MODEL,
         "max_tokens": MAX_TOKENS,
@@ -102,28 +116,30 @@ def ask_claude(messages: list) -> str:
 
     try:
         print(f"\n  [*] Sending to Claude ({MODEL})...")
-        resp = requests.post(ANTHROPIC_API_URL, headers=headers,
-                             json=payload, timeout=120)
+        resp = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=120)
         resp.raise_for_status()
-        data = resp.json()
+        data    = resp.json()
         content = data.get("content", [])
-        text = "".join(b.get("text","") for b in content if b.get("type") == "text")
+        text    = "".join(b.get("text", "") for b in content if b.get("type") == "text")
         return text.strip() if text else "[!] Claude returned empty response."
 
-    except requests.exceptions.HTTPError as e:
-        if resp.status_code == 401:
-            return "[!] Invalid API key. Check ANTHROPIC_API_KEY."
-        if resp.status_code == 429:
-            return "[!] Rate limited. Wait a moment and retry."
-        return f"[!] HTTP error {resp.status_code}: {e}"
+    except requests.exceptions.HTTPError:
+        code = resp.status_code
+        if code == 401: return "[!] Invalid API key."
+        if code == 429: return "[!] Rate limited — wait a moment and retry."
+        if code == 400: return "[!] Bad request — context may be too large or malformed."
+        if code == 529: return "[!] Claude API overloaded — retry in a moment."
+        return f"[!] HTTP {code} error from Claude API."
     except requests.exceptions.Timeout:
-        return "[!] Claude API timed out."
+        return "[!] Claude API timed out — try again."
+    except requests.exceptions.ConnectionError:
+        return "[!] Could not reach Claude API — check your internet connection."
     except Exception as e:
-        return f"[!] Unexpected error: {e}"
+        return f"[!] Unexpected error: {type(e).__name__}: {e}"
 
 
 # ─────────────────────────────────────────────
-# TOOL DISPATCH (kept from METATRON)
+# TOOL DISPATCH
 # ─────────────────────────────────────────────
 
 def extract_tool_calls(response: str) -> list:
@@ -147,15 +163,12 @@ def run_tool_calls(calls: list) -> str:
             output = handle_search_dispatch(call_content)
         else:
             output = f"[!] Unknown type: {call_type}"
-
-        results += f"\n[{call_type} RESULT: {call_content}]\n"
-        results += "─" * 40 + "\n"
-        results += output.strip() + "\n"
+        results += f"\n[{call_type} RESULT: {call_content}]\n{'─'*40}\n{output.strip()}\n"
     return results
 
 
 # ─────────────────────────────────────────────
-# RESPONSE PARSERS (kept from METATRON)
+# RESPONSE PARSERS
 # ─────────────────────────────────────────────
 
 def _clean(line: str) -> str:
@@ -169,17 +182,17 @@ def parse_vulnerabilities(response: str) -> list:
     while i < len(lines):
         line = _clean(lines[i])
         if line.startswith("VULN:"):
-            vuln = {"vuln_name":"","severity":"medium","port":"","service":"","description":"","fix":""}
+            vuln = {"vuln_name": "", "severity": "medium", "port": "", "service": "", "description": "", "fix": ""}
             for part in line.split("|"):
                 part = part.strip()
-                if part.startswith("VULN:"):     vuln["vuln_name"] = part[5:].strip()
-                elif part.startswith("SEVERITY:"): vuln["severity"] = part[9:].strip().lower()
-                elif part.startswith("PORT:"):    vuln["port"] = part[5:].strip()
-                elif part.startswith("SERVICE:"): vuln["service"] = part[8:].strip()
+                if part.startswith("VULN:"):       vuln["vuln_name"] = part[5:].strip()
+                elif part.startswith("SEVERITY:"): vuln["severity"]  = part[9:].strip().lower()
+                elif part.startswith("PORT:"):     vuln["port"]      = part[5:].strip()
+                elif part.startswith("SERVICE:"):  vuln["service"]   = part[8:].strip()
             j = i + 1
             while j < len(lines) and j <= i + 5:
                 nl = _clean(lines[j])
-                if nl.startswith(("VULN:","EXPLOIT:","RISK_LEVEL:","SUMMARY:")): break
+                if nl.startswith(("VULN:", "EXPLOIT:", "RISK_LEVEL:", "SUMMARY:")): break
                 if nl.startswith("DESC:"): vuln["description"] = nl[5:].strip()
                 elif nl.startswith("FIX:"): vuln["fix"] = nl[4:].strip()
                 j += 1
@@ -196,16 +209,16 @@ def parse_exploits(response: str) -> list:
     while i < len(lines):
         line = _clean(lines[i])
         if line.startswith("EXPLOIT:"):
-            exp = {"exploit_name":"","tool_used":"","payload":"","result":"unknown","notes":""}
+            exp = {"exploit_name": "", "tool_used": "", "payload": "", "result": "unknown", "notes": ""}
             for part in line.split("|"):
                 part = part.strip()
-                if part.startswith("EXPLOIT:"): exp["exploit_name"] = part[8:].strip()
-                elif part.startswith("TOOL:"):   exp["tool_used"] = part[5:].strip()
-                elif part.startswith("PAYLOAD:"): exp["payload"] = part[8:].strip()
+                if part.startswith("EXPLOIT:"):  exp["exploit_name"] = part[8:].strip()
+                elif part.startswith("TOOL:"):   exp["tool_used"]    = part[5:].strip()
+                elif part.startswith("PAYLOAD:"): exp["payload"]     = part[8:].strip()
             j = i + 1
             while j < len(lines) and j <= i + 4:
                 nl = _clean(lines[j])
-                if nl.startswith(("VULN:","EXPLOIT:","RISK_LEVEL:","SUMMARY:")): break
+                if nl.startswith(("VULN:", "EXPLOIT:", "RISK_LEVEL:", "SUMMARY:")): break
                 if nl.startswith("RESULT:"): exp["result"] = nl[7:].strip()
                 elif nl.startswith("NOTES:"): exp["notes"] = nl[6:].strip()
                 j += 1
@@ -226,22 +239,20 @@ def parse_summary(response: str) -> str:
 
 
 # ─────────────────────────────────────────────
-# MAIN ANALYSIS — agentic loop
+# MAIN ANALYSIS
 # ─────────────────────────────────────────────
 
 def analyse_target(target: str, raw_scan: str) -> dict:
-    messages = [
-        {
-            "role": "user",
-            "content": f"""TARGET: {target}
+    messages = [{
+        "role": "user",
+        "content": f"""TARGET: {target}
 
 RECON DATA:
 {raw_scan}
 
 Analyze this target completely. Use [TOOL:] or [SEARCH:] if you need more data.
 List all vulnerabilities, fixes, and suggest exploits where applicable."""
-        }
-    ]
+    }]
 
     final_response = ""
 
@@ -255,21 +266,20 @@ List all vulnerabilities, fixes, and suggest exploits where applicable."""
 
         final_response = response
 
+        if response.startswith("[!]"):
+            print(f"\n  [!] Claude returned an error — stopping loop.")
+            break
+
         tool_calls = extract_tool_calls(response)
         if not tool_calls:
             print("\n  [*] No tool calls. Analysis complete.")
             break
 
         tool_results = run_tool_calls(tool_calls)
-
         messages.append({"role": "assistant", "content": response})
         messages.append({
             "role": "user",
-            "content": f"""[TOOL RESULTS]
-{tool_results}
-
-Continue your analysis with this new information.
-If analysis is complete, give the final RISK_LEVEL and SUMMARY."""
+            "content": f"[TOOL RESULTS]\n{tool_results}\n\nContinue analysis. Give final RISK_LEVEL and SUMMARY when done."
         })
 
     vulns      = parse_vulnerabilities(final_response)
