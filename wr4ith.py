@@ -19,6 +19,7 @@ from webtools import run_web_recon
 from llm import analyse_target, get_api_key
 from export import export_menu
 from ai_mode import run_ai_mode
+from poc_tester import run_poc_tester
 
 
 # ─────────────────────────────────────────────
@@ -189,6 +190,10 @@ def new_scan():
     if confirm("Export this report?"):
         export_menu(data)
 
+    if confirm("Run exploitability test on this session?"):
+        run_poc_tester(preloaded_sl_no=sl_no)
+        return
+
     if confirm("Edit or delete anything?"):
         edit_delete_menu(sl_no)
 
@@ -226,6 +231,10 @@ def view_history():
 
     if confirm("Export this report?"):
         export_menu(data)
+
+    if confirm("Run exploitability test on this session?"):
+        run_poc_tester(preloaded_sl_no=sl_no)
+        return
 
     if confirm("Edit or delete anything?"):
         edit_delete_menu(sl_no)
@@ -339,13 +348,16 @@ def edit_delete_menu(sl_no: int):
 # MAIN MENU
 # ─────────────────────────────────────────────
 
-def main_menu():
+def recon_menu():
+    """Module 1 — Recon & PoC Discovery sub-menu."""
     while True:
         banner()
+        print("  \033[91m── MODULE 1 — RECON & POC DISCOVERY ──\033[0m")
+        print()
         print("  \033[92m[1]\033[0m  New Scan")
         print("  \033[92m[2]\033[0m  View History")
         print("  \033[92m[3]\033[0m  AI Mode")
-        print("  \033[92m[4]\033[0m  Exit")
+        print("  \033[92m[4]\033[0m  Back")
         divider()
 
         choice = prompt("wr4ith> ")
@@ -360,6 +372,29 @@ def main_menu():
             run_ai_mode()
             input("\n\033[90mPress Enter to continue...\033[0m")
         elif choice == "4":
+            return
+        else:
+            warn("Invalid choice.")
+
+
+def main_menu():
+    while True:
+        banner()
+        print("  \033[91m  WR4ITH Security Suite\033[0m")
+        print()
+        print("  \033[92m[1]\033[0m  Recon & PoC Discovery")
+        print("  \033[92m[2]\033[0m  PoC Exploitability Test")
+        print("  \033[92m[3]\033[0m  Exit")
+        divider()
+
+        choice = prompt("wr4ith> ")
+
+        if choice == "1":
+            recon_menu()
+        elif choice == "2":
+            run_poc_tester()
+            input("\n\033[90mPress Enter to continue...\033[0m")
+        elif choice == "3":
             print("\n\033[91m[*] Shutting down WR4ITH. Stay legal.\033[0m\n")
             sys.exit(0)
         else:

@@ -48,6 +48,18 @@ def init_db():
             FOREIGN KEY (sl_no)    REFERENCES history(sl_no)         ON DELETE CASCADE,
             FOREIGN KEY (vuln_id)  REFERENCES vulnerabilities(id)    ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS poc_results (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            sl_no        INTEGER NOT NULL,
+            vuln_id      INTEGER NOT NULL,
+            status       TEXT DEFAULT 'UNTESTED',
+            test_request TEXT DEFAULT '',
+            test_response TEXT DEFAULT '',
+            evidence     TEXT DEFAULT '',
+            tested_at    TEXT DEFAULT '',
+            FOREIGN KEY (sl_no)   REFERENCES history(sl_no)        ON DELETE CASCADE,
+            FOREIGN KEY (vuln_id) REFERENCES vulnerabilities(id)   ON DELETE CASCADE
+        );
         CREATE TABLE IF NOT EXISTS exploits (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             sl_no        INTEGER NOT NULL,
@@ -215,6 +227,43 @@ def get_exploits(sl_no):
     rows = conn.execute("SELECT id,sl_no,exploit_name,tool_used,payload,result,notes FROM exploits WHERE sl_no=?", (sl_no,)).fetchall()
     conn.close()
     return [tuple(r) for r in rows]
+
+
+# ── poc results ──────────────────────────────
+
+def save_poc_result(sl_no, vuln_id, status, test_request, test_response, evidence):
+    from datetime import datetime
+    conn = get_connection()
+    # upsert — replace existing result for same vuln
+    conn.execute(
+        "DELETE FROM poc_results WHERE vuln_id=?", (vuln_id,)
+    )
+    conn.execute(
+        "INSERT INTO poc_results (sl_no,vuln_id,status,test_request,test_response,evidence,tested_at) VALUES (?,?,?,?,?,?,?)",
+        (sl_no, vuln_id, status, test_request, test_response, evidence,
+         datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_poc_results(sl_no):
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id,sl_no,vuln_id,status,test_request,test_response,evidence,tested_at FROM poc_results WHERE sl_no=?",
+        (sl_no,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_poc_result_for_vuln(vuln_id):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM poc_results WHERE vuln_id=?", (vuln_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 # ── print helpers ─────────────────────────────
